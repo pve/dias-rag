@@ -19,9 +19,11 @@ A fast, local semantic search tool for markdown documentation using vector embed
 # Install UV (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Clone and install
+# Clone repository
 git clone <repo-url> dias-rag
 cd dias-rag
+
+# Install dependencies (UV automatically creates and manages a virtual environment)
 uv sync
 
 # Index your content (first run will download ~90MB ML model)
@@ -30,6 +32,34 @@ uv run dias-rag index /path/to/your/content
 # Search
 uv run dias-rag search "authentication patterns"
 ```
+
+### Virtual Environment
+
+**UV manages the virtual environment automatically** - you don't need to activate it manually. Just use `uv run` before commands:
+
+```bash
+# UV handles the virtualenv for you
+uv run dias-rag search "query"
+uv run pytest
+```
+
+**Optional: Traditional virtualenv activation** (if you prefer):
+
+```bash
+# Create virtual environment (done automatically by uv sync)
+uv sync
+
+# Activate it manually
+source .venv/bin/activate   # Linux/macOS
+# or
+.venv\Scripts\activate      # Windows
+
+# Now you can run commands directly
+dias-rag search "query"
+pytest
+```
+
+**Recommended:** Use `uv run` - it's simpler and ensures correct environment every time.
 
 ### Basic Usage
 
