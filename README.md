@@ -23,6 +23,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone <repo-url> dias-rag
 cd dias-rag
 
+# Install Python 3.11 using pyenv (if not already installed)
+pyenv install 3.11
+
 # Install dependencies (UV automatically creates and manages a virtual environment)
 uv sync
 
