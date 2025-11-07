@@ -1,0 +1,67 @@
+[project]
+name = "dias-rag"
+version = "0.1.0"
+description = "Local semantic search for markdown documentation"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+keywords = ["search", "vector", "markdown", "embeddings", "rag", "semantic-search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # Vector Search & Embeddings
+    "sentence-transformers>=2.2.2",
+    "chromadb>=0.4.15",
+    "torch>=2.1.0",
+
+    # CLI Framework
+    "click>=8.1.7",
+
+    # Markdown Processing
+    "python-frontmatter>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.3",
+    "pytest-cov>=4.1.0",
+    "black>=23.11.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.6",
+]
+
+[project.scripts]
+dias-rag = "src.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
