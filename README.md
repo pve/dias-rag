@@ -64,6 +64,43 @@ pytest
 
 **Recommended:** Use `uv run` - it's simpler and ensures correct environment every time.
 
+### Production Installation (Global Tool)
+
+For a stable installation that doesn't auto-update with code changes:
+
+```bash
+# Install as a global tool (one-time setup)
+cd dias-rag
+uv tool install .
+
+# Now use 'dias-rag' directly without 'uv run'
+dias-rag index /path/to/content
+dias-rag search "authentication patterns"
+```
+
+**Benefits:**
+- No need for `uv run` prefix
+- Available system-wide in any directory
+- Stable - won't update unless you explicitly upgrade
+- Clean separation from development environment
+
+**Upgrading:**
+```bash
+cd dias-rag
+git pull  # Get latest code
+uv tool install . --force  # Reinstall
+```
+
+**Uninstalling:**
+```bash
+uv tool uninstall dias-rag
+```
+
+**List installed tools:**
+```bash
+uv tool list
+```
+
 ### Basic Usage
 
 ```bash
