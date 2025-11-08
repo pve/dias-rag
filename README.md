@@ -179,6 +179,34 @@ For 100 markdown files (~500KB total):
 
 ## Troubleshooting
 
+### "ModuleNotFoundError: No module named 'src'" Error
+
+If you see this error when running `uv run dias-rag`:
+
+```bash
+Traceback (most recent call last):
+  File ".venv/bin/dias-rag", line 4, in <module>
+    from src.cli import cli
+ModuleNotFoundError: No module named 'src'
+```
+
+**Solution**: The package isn't installed properly. Delete the virtual environment and reinstall:
+
+```bash
+rm -rf .venv
+uv sync
+```
+
+This typically happens after:
+- Installing Python 3.11 with pyenv for the first time
+- Switching Python versions
+- Interrupted or partial installation
+
+**Verify the fix worked**:
+```bash
+uv run dias-rag --help  # Should show help without errors
+```
+
 ### "ChromaDB not found" Error
 
 ```bash

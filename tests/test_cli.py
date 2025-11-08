@@ -183,6 +183,22 @@ class TestCLIIntegration:
     - The command works as users would actually run it
     """
 
+    def test_package_is_installed(self):
+        """Test that the dias-rag package is installed (catches 'No module named src')."""
+        result = subprocess.run(
+            ["uv", "run", "python", "-c", "import src.cli; print('OK')"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, (
+            f"Package not installed properly. stderr: {result.stderr}\n"
+            f"If you see 'ModuleNotFoundError: No module named src', "
+            f"try: rm -rf .venv && uv sync"
+        )
+        assert "OK" in result.stdout
+
     def test_installed_command_help(self):
         """Test that 'uv run dias-rag --help' works (catches packaging issues)."""
         result = subprocess.run(
@@ -192,7 +208,12 @@ class TestCLIIntegration:
             timeout=30,
         )
 
-        assert result.returncode == 0
+        assert result.returncode == 0, (
+            f"Command failed. stderr: {result.stderr}\n"
+            f"stdout: {result.stdout}\n"
+            f"If you see 'ModuleNotFoundError: No module named src', "
+            f"try: rm -rf .venv && uv sync"
+        )
         assert "Dias-RAG" in result.stdout
         assert "index" in result.stdout
         assert "search" in result.stdout
