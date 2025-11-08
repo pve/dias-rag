@@ -1,5 +1,10 @@
 """Tests for CLI module."""
 
+import subprocess
+import tempfile
+import os
+from pathlib import Path
+
 from click.testing import CliRunner
 
 from src.cli import cli
@@ -167,3 +172,78 @@ class TestSearchCommand:
             result = runner.invoke(cli, ["search", "test", "--data-dir", "./custom-data"])
 
             assert result.exit_code == 0
+
+
+class TestCLIIntegration:
+    """Integration tests that run the actual installed command.
+
+    These tests use subprocess to run 'uv run dias-rag' which tests:
+    - The package is correctly installed
+    - The entry point script can import the src module
+    - The command works as users would actually run it
+    """
+
+    def test_installed_command_help(self):
+        """Test that 'uv run dias-rag --help' works (catches packaging issues)."""
+        result = subprocess.run(
+            ["uv", "run", "dias-rag", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0
+        assert "Dias-RAG" in result.stdout
+        assert "index" in result.stdout
+        assert "search" in result.stdout
+
+    def test_installed_command_version(self):
+        """Test that 'uv run dias-rag --version' works."""
+        result = subprocess.run(
+            ["uv", "run", "dias-rag", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0
+        assert "0.1.0" in result.stdout
+
+    def test_installed_command_search_integration(self):
+        """Test the full workflow: index then search using 'uv run dias-rag'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create test markdown file
+            content_file = Path(tmpdir) / "test.md"
+            content_file.write_text("# Test\n\nThis is about authentication patterns.")
+
+            data_dir = Path(tmpdir) / "data"
+
+            # Index the content
+            result = subprocess.run(
+                ["uv", "run", "dias-rag", "index", tmpdir, "--data-dir", str(data_dir)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            assert result.returncode == 0, f"Index failed: {result.stderr}"
+            assert "Indexing completed successfully" in result.stdout
+
+            # Search the indexed content
+            result = subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "dias-rag",
+                    "search",
+                    "authentication patterns",
+                    "--data-dir",
+                    str(data_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            assert result.returncode == 0, f"Search failed: {result.stderr}"
+            assert "test.md" in result.stdout or "Test" in result.stdout
