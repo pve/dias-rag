@@ -92,6 +92,61 @@ class TestSemanticSearch:
             scores = [r.score for r in results]
             assert scores == sorted(scores, reverse=True)
 
+    def test_semantic_search_draft_field(self, tmp_path):
+        """Extract draft field from frontmatter."""
+        # Create documents with draft field
+        docs = [
+            Document(
+                id="doc1",
+                file_path="draft.md",
+                title="Draft Document",
+                content="This is a draft document.",
+                chunks=["This is a draft document."],
+                frontmatter={"title": "Draft Document", "draft": True},
+                word_count=5,
+            ),
+            Document(
+                id="doc2",
+                file_path="published.md",
+                title="Published Document",
+                content="This is a published document.",
+                chunks=["This is a published document."],
+                frontmatter={"title": "Published Document", "draft": False},
+                word_count=5,
+            ),
+            Document(
+                id="doc3",
+                file_path="no-draft.md",
+                title="No Draft Field",
+                content="This document has no draft field.",
+                chunks=["This document has no draft field."],
+                frontmatter={"title": "No Draft Field"},
+                word_count=6,
+            ),
+        ]
+
+        # Index documents
+        data_dir = str(tmp_path / "data")
+        index_documents(docs, data_dir=data_dir)
+
+        # Search
+        results = semantic_search("document", data_dir=data_dir)
+
+        # Find each document in results
+        draft_result = next((r for r in results if "draft.md" in r.file_path), None)
+        published_result = next((r for r in results if "published.md" in r.file_path), None)
+        no_draft_result = next((r for r in results if "no-draft.md" in r.file_path), None)
+
+        # Verify draft field is correctly extracted
+        assert draft_result is not None
+        assert draft_result.draft is True
+
+        assert published_result is not None
+        assert published_result.draft is False
+
+        assert no_draft_result is not None
+        assert no_draft_result.draft is False  # Should default to False
+
 
 class TestFormatResults:
     """Test result formatting."""
@@ -180,3 +235,72 @@ class TestFormatResults:
         output = format_results(results, search_time=0.15)
 
         assert "0.15s" in output or "0.15" in output
+
+    def test_format_results_with_draft(self):
+        """Display draft status in results."""
+        results = [
+            SearchResult(
+                document_id="doc1",
+                file_path="draft.md",
+                title="Draft Document",
+                matched_chunk="This is a draft.",
+                score=0.85,
+                chunk_index=0,
+                draft=True,
+            )
+        ]
+
+        output = format_results(results, query="test")
+
+        assert "[DRAFT]" in output
+        assert "Draft Document" in output
+
+    def test_format_results_without_draft(self):
+        """Don't show draft status for published documents."""
+        results = [
+            SearchResult(
+                document_id="doc1",
+                file_path="published.md",
+                title="Published Document",
+                matched_chunk="This is published.",
+                score=0.85,
+                chunk_index=0,
+                draft=False,
+            )
+        ]
+
+        output = format_results(results, query="test")
+
+        assert "[DRAFT]" not in output
+        assert "Published Document" in output
+
+    def test_format_results_mixed_draft_status(self):
+        """Display both draft and published documents."""
+        results = [
+            SearchResult(
+                document_id="doc1",
+                file_path="draft.md",
+                title="Draft Document",
+                matched_chunk="This is a draft.",
+                score=0.90,
+                chunk_index=0,
+                draft=True,
+            ),
+            SearchResult(
+                document_id="doc2",
+                file_path="published.md",
+                title="Published Document",
+                matched_chunk="This is published.",
+                score=0.85,
+                chunk_index=0,
+                draft=False,
+            ),
+        ]
+
+        output = format_results(results, query="test")
+
+        # Check both documents are shown
+        assert "Draft Document" in output
+        assert "Published Document" in output
+        # Check draft marker appears only once
+        assert output.count("[DRAFT]") == 1
