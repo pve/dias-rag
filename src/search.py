@@ -20,6 +20,7 @@ class SearchResult:
     matched_chunk: str  # The chunk that matched
     score: float  # Similarity score (0-1)
     chunk_index: int  # Which chunk matched (0-indexed)
+    draft: bool = False  # Draft status from frontmatter
 
 
 def semantic_search(
@@ -91,6 +92,16 @@ def semantic_search(
             metadata = results["metadatas"][0][i]
             matched_chunk = results["documents"][0][i]
 
+            # Extract draft status from frontmatter metadata
+            draft = False
+            if "fm_draft" in metadata:
+                draft_value = metadata["fm_draft"]
+                # Handle various representations of boolean values
+                if isinstance(draft_value, bool):
+                    draft = draft_value
+                elif isinstance(draft_value, str):
+                    draft = draft_value.lower() in ("true", "1", "yes")
+
             result = SearchResult(
                 document_id=metadata["document_id"],
                 file_path=metadata["file_path"],
@@ -98,6 +109,7 @@ def semantic_search(
                 matched_chunk=matched_chunk,
                 score=score,
                 chunk_index=int(metadata["chunk_index"]),
+                draft=draft,
             )
 
             search_results.append(result)
@@ -131,7 +143,13 @@ def format_results(results: List[SearchResult], query: str = "", search_time: fl
 
         # Format result
         output.append(f"[{i}] {result.file_path} (score: {result.score:.2f})")
-        output.append(f"    Title: {result.title}")
+
+        # Display title and draft status
+        title_line = f"    Title: {result.title}"
+        if result.draft:
+            title_line += " [DRAFT]"
+        output.append(title_line)
+
         output.append(f"    {snippet}")
         output.append("")  # Blank line between results
 
