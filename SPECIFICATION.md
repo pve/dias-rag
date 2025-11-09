@@ -1,35 +1,34 @@
-# **Specification: Local Vector Search with Embeddings (UV Edition)**
+# **Specification: Dias-RAG - Local Semantic Search MVP**
 
 ## **Project Overview**
 
-A terminal-based semantic search tool for ~100 markdown files (Hugo format with frontmatter). Provides fast, local vector search with an elegant TUI interface using Python and UV for dependency management.
+A simple CLI-based semantic search tool for ~100 markdown files (Hugo format with frontmatter). Provides fast, local vector search using Python and UV for dependency management.
+
+**MVP Scope:** Command-line interface with semantic search only. No TUI, no incremental updates, minimal configuration.
 
 ---
 
 ## **1. System Architecture**
 
 ```
-book-search/
+dias-rag/
 ├── src/
 │   ├── __init__.py
 │   ├── indexer.py           # Vector embedding & indexing
-│   ├── search.py            # Search logic & ranking
-│   ├── tui.py               # Terminal UI (Textual)
-│   ├── config.py            # Configuration management
-│   └── utils.py             # Helper functions (markdown parsing, etc.)
+│   ├── search.py            # Search logic
+│   ├── cli.py               # CLI interface
+│   └── utils.py             # Helper functions (markdown parsing, chunking)
 ├── data/
-│   ├── chroma/              # Vector database storage
-│   └── cache/               # Cached embeddings
+│   └── chroma/              # Vector database storage (created on first run)
 ├── tests/
 │   ├── test_indexer.py
 │   ├── test_search.py
+│   ├── test_utils.py
 │   └── fixtures/            # Sample markdown files
-├── config.yaml              # User configuration
 ├── pyproject.toml           # UV project configuration
 ├── uv.lock                  # UV lockfile
 ├── .python-version          # Python version for UV
-├── README.md
-└── search.py                # Main entry point
+└── README.md
 ```
 
 ---
@@ -56,8 +55,17 @@ def parse_frontmatter(content: str) -> Tuple[Dict, str]:
 
 def chunk_content(content: str, max_chunk_size: int = 512) -> List[str]:
     """
-    Split content into semantic chunks
-    Uses: sentence boundaries, paragraph breaks
+    Split content into semantic chunks using sentence boundaries.
+
+    Algorithm:
+    1. Split on paragraph breaks (double newlines)
+    2. Within paragraphs, split on sentence boundaries (., !, ?)
+    3. Accumulate sentences until max_chunk_size would be exceeded
+    4. If single sentence > max_chunk_size, split at clause boundaries (; , :)
+    5. If still too large, split at word boundaries
+
+    Returns: List of text chunks, each ≤ max_chunk_size characters
+    Note: No overlap between chunks in MVP
     """
 
 def generate_embeddings(chunks: List[str]) -> List[np.ndarray]:
@@ -66,21 +74,16 @@ def generate_embeddings(chunks: List[str]) -> List[np.ndarray]:
     Model: all-MiniLM-L6-v2 (fast, good quality, 384 dimensions)
     """
 
-def index_documents(docs: List[Document], collection_name: str = "book_content"):
+def index_documents(docs: List[Document], collection_name: str = "dias_content"):
     """
     Store documents and embeddings in ChromaDB
     Includes: content, metadata, embeddings
     """
 
-def rebuild_index(directory: str, force: bool = False):
+def rebuild_index(directory: str):
     """
-    Full reindex of all documents
-    Shows progress bar during indexing
-    """
-
-def incremental_update(directory: str):
-    """
-    Update only changed/new files (based on mtime)
+    Full reindex of all documents (MVP: always full rebuild)
+    Shows progress during indexing
     """
 ```
 
@@ -88,13 +91,12 @@ def incremental_update(directory: str):
 ```python
 @dataclass
 class Document:
-    id: str                    # Unique ID (file path hash)
+    id: str                    # Unique ID (MD5 hash of file path)
     file_path: str             # Relative path to file
-    title: str                 # From frontmatter or H1
-    content: str               # Full markdown content
-    chunks: List[str]          # Content split into chunks
-    frontmatter: Dict          # YAML frontmatter as dict
-    last_modified: float       # File mtime for incremental updates
+    title: str                 # From frontmatter or first H1, fallback to filename
+    content: str               # Full markdown content (without frontmatter)
+    chunks: List[str]          # Content split into semantic chunks
+    frontmatter: Dict          # YAML frontmatter as dict (empty if missing)
     word_count: int            # Content statistics
 ```
 
@@ -102,43 +104,21 @@ class Document:
 
 ### **2.2 Search Module** (`search.py`)
 
-**Purpose:** Execute searches, rank results, format output
+**Purpose:** Execute semantic searches, format output
 
 **Key Functions:**
 ```python
-def semantic_search(query: str, limit: int = 10) -> List[SearchResult]:
+def semantic_search(query: str, limit: int = 10,
+                   collection_name: str = "dias_content") -> List[SearchResult]:
     """
     Vector similarity search using ChromaDB
-    Returns: Top N results with similarity scores
+    Returns: Top N results with similarity scores (cosine similarity)
     """
 
-def keyword_search(query: str, limit: int = 10) -> List[SearchResult]:
+def format_results(results: List[SearchResult]) -> str:
     """
-    Traditional keyword/phrase search (fallback)
-    Uses: simple text matching on content
-    """
-
-def hybrid_search(query: str, limit: int = 10, 
-                 semantic_weight: float = 0.7) -> List[SearchResult]:
-    """
-    Combine semantic + keyword search
-    Weighted fusion of results
-    """
-
-def get_context_snippet(content: str, query: str, 
-                       window: int = 150) -> str:
-    """
-    Extract relevant snippet around query terms
-    Returns: "...context before **match** context after..."
-    """
-
-def rank_results(results: List[SearchResult], 
-                query: str) -> List[SearchResult]:
-    """
-    Post-processing ranking:
-    - Boost by frontmatter relevance (tags, category)
-    - Penalize very short chunks
-    - Boost recent files (optional)
+    Format search results for CLI output
+    Returns: Formatted string with file paths, titles, scores, and snippets
     """
 ```
 
@@ -146,168 +126,90 @@ def rank_results(results: List[SearchResult],
 ```python
 @dataclass
 class SearchResult:
-    document_id: str
-    file_path: str
-    title: str
-    snippet: str               # Context around match
+    document_id: str           # MD5 hash of file path
+    file_path: str             # Relative path to file
+    title: str                 # Document title
+    matched_chunk: str         # The chunk that matched
     score: float               # Similarity score (0-1)
-    frontmatter: Dict          # For display filtering
-    chunk_index: int           # Which chunk matched
-    matched_chunk: str         # Full chunk text
+    chunk_index: int           # Which chunk matched (0-indexed)
 ```
 
 ---
 
-### **2.3 TUI Module** (`tui.py`)
+### **2.3 CLI Module** (`cli.py`)
 
-**Purpose:** Beautiful terminal interface using Textual framework
+**Purpose:** Command-line interface using Click
 
-**Main Screen Layout:**
-```
-┌─ Book Search ────────────────────────────────────────────┐
-│ 🔍 Search: authentication patterns            [Ctrl+R]   │
-│ Mode: [●Semantic] [○Keyword] [○Hybrid]    Results: 8    │
-├──────────────────────────────────────────────────────────┤
-│                                                           │
-│ ► 📄 chapter-03-security.md                    (0.89)    │
-│   Tags: security, auth                                    │
-│   ...discusses JWT authentication patterns for            │
-│   microservices. The key consideration is...              │
-│   ──────────────────────────────────────────────         │
-│                                                           │
-│   📄 chapter-07-api-design.md                  (0.84)    │
-│   Tags: api, design                                       │
-│   ...authentication middleware should handle...           │
-│   ──────────────────────────────────────────────         │
-│                                                           │
-│   📄 appendix-b-patterns.md                    (0.78)    │
-│   Tags: patterns, reference                               │
-│   ...common authentication antipatterns...                │
-│                                                           │
-├──────────────────────────────────────────────────────────┤
-│ [↑↓] Navigate [Enter] View [Tab] Mode [/] Search [Q]uit  │
-└──────────────────────────────────────────────────────────┘
-```
-
-**Detail View (on Enter):**
-```
-┌─ chapter-03-security.md ─────────────────────────────────┐
-│ ← Back [Esc]                                              │
-├──────────────────────────────────────────────────────────┤
-│ Title: Security Best Practices                           │
-│ Tags: security, auth, jwt                                 │
-│ Last Modified: 2024-11-05                                 │
-│ Word Count: 2,450                                         │
-├──────────────────────────────────────────────────────────┤
-│                                                           │
-│ [Scrollable markdown preview with syntax highlighting]   │
-│                                                           │
-│ ## Authentication                                         │
-│                                                           │
-│ JWT authentication patterns for microservices require...  │
-│                                                           │
-├──────────────────────────────────────────────────────────┤
-│ [O] Open in VS Code  [C] Copy Path  [Esc] Back           │
-└──────────────────────────────────────────────────────────┘
-```
-
-**Key TUI Components:**
-
+**Commands:**
 ```python
-class SearchApp(App):
-    """Main Textual application"""
-    
-    CSS_PATH = "styles.css"  # Textual CSS for styling
-    
-    BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("/", "focus_search", "Search"),
-        ("tab", "cycle_mode", "Toggle Mode"),
-        ("ctrl+r", "rebuild_index", "Rebuild Index"),
-        ("ctrl+h", "show_help", "Help"),
-    ]
-    
-    def compose(self) -> ComposeResult:
-        """Build UI layout"""
-        yield Header()
-        yield SearchInput(placeholder="Enter search query...")
-        yield ModeSelector()
-        yield ResultsList()
-        yield Footer()
-    
-    def on_search_input_submitted(self, event):
-        """Handle search execution"""
-        
-    def on_result_selected(self, event):
-        """Show detail view"""
+@click.group()
+def cli():
+    """Dias-RAG: Local semantic search for markdown files"""
+    pass
 
-class ResultsList(ListView):
-    """Scrollable list of search results"""
-    
-class ResultItem(ListItem):
-    """Single search result display"""
-    
-class DetailView(Screen):
-    """Full document preview modal"""
+@cli.command()
+@click.argument('content_directory', type=click.Path(exists=True))
+@click.option('--data-dir', default='./data', help='Directory for vector database')
+def index(content_directory: str, data_dir: str):
+    """
+    Index all markdown files in CONTENT_DIRECTORY
+
+    Example: uv run dias-rag index /path/to/content
+    """
+    # Call indexer.rebuild_index()
+    # Show progress bar during indexing
+
+@cli.command()
+@click.argument('query')
+@click.option('--limit', '-n', default=10, help='Number of results to return')
+@click.option('--data-dir', default='./data', help='Directory for vector database')
+def search(query: str, limit: int, data_dir: str):
+    """
+    Search indexed documents
+
+    Example: uv run dias-rag search "authentication patterns"
+    """
+    # Call search.semantic_search()
+    # Format and print results
 ```
 
-**Keyboard Shortcuts:**
-- `/` or `Ctrl+K`: Focus search input
-- `↑↓`: Navigate results
-- `Enter`: View full document
-- `Tab`: Cycle search mode (Semantic → Keyword → Hybrid)
-- `O`: Open in VS Code (from detail view)
-- `C`: Copy file path to clipboard
-- `Ctrl+R`: Rebuild index
-- `Esc`: Go back / close detail view
-- `Q`: Quit application
-
-**Visual Features:**
-- **Color coding:** Score-based highlighting (green >0.8, yellow >0.6, white <0.6)
-- **Icons:** File type indicators (📄 .md, 📁 folder)
-- **Progress bars:** During indexing operations
-- **Status messages:** Bottom bar shows current operation
-- **Markdown preview:** Syntax highlighted in detail view
-
----
-
-### **2.4 Config Module** (`config.py`)
-
-**Purpose:** Manage user configuration
-
-**config.yaml:**
-```yaml
-# Paths
-content_directory: "/path/to/your/hugo/content"
-excluded_patterns:
-  - "drafts/*"
-  - "archive/*"
-  - "*.draft.md"
-
-# Search Settings
-default_search_mode: "semantic"  # semantic | keyword | hybrid
-max_results: 10
-snippet_length: 150
-
-# Embedding Model
-model_name: "all-MiniLM-L6-v2"
-chunk_size: 512
-chunk_overlap: 50
-
-# Vector Database
-collection_name: "book_content"
-similarity_metric: "cosine"  # cosine | euclidean | dot
-
-# TUI Settings
-theme: "monokai"  # monokai | dracula | nord
-show_frontmatter: true
-auto_open_vscode: false
-
-# Performance
-cache_embeddings: true
-incremental_updates: true
-index_on_startup: false
+**CLI Output Format:**
 ```
+$ uv run dias-rag search "authentication patterns"
+
+Found 8 results:
+
+[1] chapter-03-security.md (score: 0.89)
+    Title: Security Best Practices
+    ...discusses JWT authentication patterns for microservices.
+    The key consideration is...
+
+[2] chapter-07-api-design.md (score: 0.84)
+    Title: API Design Principles
+    ...authentication middleware should handle token validation...
+
+[3] appendix-b-patterns.md (score: 0.78)
+    Title: Common Patterns
+    ...common authentication antipatterns include...
+
+Search completed in 0.15s
+```
+
+### **2.4 Configuration** (MVP: Minimal)
+
+**Approach:** Command-line arguments only, no config file required
+
+**Key Parameters (hardcoded defaults):**
+```python
+DEFAULT_CHUNK_SIZE = 512
+DEFAULT_MODEL = "all-MiniLM-L6-v2"
+DEFAULT_COLLECTION_NAME = "dias_content"
+DEFAULT_SIMILARITY_METRIC = "cosine"
+DEFAULT_DATA_DIR = "./data"
+DEFAULT_LIMIT = 10
+```
+
+**Future:** Can add optional YAML config file support later
 
 ---
 
@@ -317,15 +219,15 @@ index_on_startup: false
 
 ```toml
 [project]
-name = "book-search"
+name = "dias-rag"
 version = "0.1.0"
-description = "Local vector search for markdown documentation with TUI"
+description = "Local semantic search for markdown documentation"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     { name = "Your Name", email = "your.email@example.com" }
 ]
-keywords = ["search", "vector", "markdown", "tui", "embeddings"]
+keywords = ["search", "vector", "markdown", "embeddings", "rag", "semantic-search"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -339,34 +241,24 @@ dependencies = [
     "sentence-transformers>=2.2.2",
     "chromadb>=0.4.15",
     "torch>=2.1.0",
-    
-    # TUI Framework
-    "textual>=0.41.0",
-    "rich>=13.6.0",
-    
-    # Markdown & Content Processing
-    "python-frontmatter>=1.0.1",
-    "markdown>=3.5.1",
-    
-    # Utilities
-    "pyyaml>=6.0.1",
+
+    # CLI Framework
     "click>=8.1.7",
-    "watchdog>=3.0.0",
-    "pyperclip>=1.8.2",
+
+    # Markdown Processing
+    "python-frontmatter>=1.0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.3",
-    "pytest-asyncio>=0.21.0",
     "black>=23.11.0",
     "mypy>=1.7.0",
     "ruff>=0.1.6",
 ]
 
 [project.scripts]
-book-search = "src.tui:main"
-book-index = "src.indexer:cli"
+dias-rag = "src.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
@@ -438,17 +330,17 @@ uv lock --upgrade
 # Update specific dependency
 uv lock --upgrade-package chromadb
 
-# Run the application
-uv run book-search
+# Run the CLI
+uv run dias-rag --help
 
-# Run with arguments
-uv run book-search query "authentication patterns"
+# Index documents
+uv run dias-rag index /path/to/content
+
+# Search
+uv run dias-rag search "your query here"
 
 # Run tests
 uv run pytest
-
-# Run with specific Python version
-uv run --python 3.12 book-search
 
 # Format code
 uv run black src/
@@ -456,11 +348,8 @@ uv run black src/
 # Type checking
 uv run mypy src/
 
-# Create a virtual environment (if needed for IDE)
-uv venv
-source .venv/bin/activate  # On Unix
-# or
-.venv\Scripts\activate     # On Windows
+# Lint
+uv run ruff check src/
 ```
 
 ### **Development Workflow:**
@@ -471,11 +360,8 @@ ALWAYS use test driven development.
 # Install project in editable mode with dev dependencies
 uv sync --extra dev
 
-# Run the indexer
-uv run book-index --rebuild
-
-# Launch TUI
-uv run book-search
+# Run tests
+uv run pytest
 
 # Run tests with coverage
 uv run pytest --cov=src tests/
@@ -488,59 +374,40 @@ uv run ruff check src/ tests/
 uv run mypy src/
 ```
 
-### **UV Tool Installation (Alternative):**
-
-```bash
-# Install as a UV tool (global installation)
-uv tool install book-search
-
-# Then run from anywhere
-book-search
-
-# Update tool
-uv tool upgrade book-search
-
-# Uninstall
-uv tool uninstall book-search
-```
-
 ---
 
 ## **5. Usage Examples**
 
 ### **Initial Setup:**
 ```bash
-# Clone or create project
-git clone <your-repo> book-search
-cd book-search
+# Clone repository
+git clone <your-repo> dias-rag
+cd dias-rag
 
 # Install with UV
 uv sync
 
-# Configure
-cp config.example.yaml config.yaml
-# Edit config.yaml with your Hugo content path
+# Index your content (one-time, ~30 seconds for 100 files)
+uv run dias-rag index /path/to/your/hugo/content
 
-# Build index (one-time, ~30 seconds for 100 files)
-uv run book-index --rebuild
-
-# Launch TUI
-uv run book-search
+# Search
+uv run dias-rag search "authentication patterns"
 ```
 
 ### **Daily Workflow:**
 ```bash
-# Start search TUI
-uv run book-search
+# Search indexed content
+uv run dias-rag search "your query here"
 
-# Or direct search from CLI
-uv run book-search query "authentication patterns" --mode semantic
+# Limit number of results
+uv run dias-rag search "security best practices" --limit 5
 
-# Rebuild index after writing new content
-uv run book-index --update
+# Rebuild index after adding/updating content
+uv run dias-rag index /path/to/your/hugo/content
 
-# Watch mode (auto-reindex on file changes)
-uv run book-search watch
+# Use custom data directory
+uv run dias-rag index /path/to/content --data-dir ./my-data
+uv run dias-rag search "query" --data-dir ./my-data
 ```
 
 ### **Development Workflow:**
@@ -551,6 +418,9 @@ uv sync --extra dev
 # Run tests
 uv run pytest
 
+# Run specific test file
+uv run pytest tests/test_search.py -v
+
 # Format code
 uv run black src/ tests/
 
@@ -559,9 +429,6 @@ uv run ruff check src/
 
 # Type check
 uv run mypy src/
-
-# Run specific test
-uv run pytest tests/test_search.py -v
 
 # Update dependencies
 uv lock --upgrade
@@ -575,90 +442,128 @@ For 100 markdown files (~500KB total):
 
 | Operation | Target | Notes |
 |-----------|--------|-------|
-| Initial indexing | < 30s | One-time setup |
-| Incremental update | < 5s | Only changed files |
+| Initial indexing | < 30s | Full rebuild |
 | Search query | < 200ms | Return top 10 results |
-| TUI startup | < 2s | With cached embeddings |
 | Memory usage | < 500MB | Embeddings in memory |
 | UV sync time | < 10s | First time with cached downloads |
 
 ---
 
-## **7. Implementation Phases**
+## **7. Implementation Plan (MVP)**
 
-### **Phase 1: Project Setup & Core Indexing (Week 1)**
-- [ ] Initialize UV project with pyproject.toml
-- [ ] Set up project structure
-- [ ] File scanning and markdown parsing
-- [ ] Frontmatter extraction
-- [ ] Content chunking strategy
-- [ ] Embedding generation
-- [ ] ChromaDB integration
-- [ ] Basic CLI for indexing
-- **Deliverable:** Can index 100 files, generate embeddings
+### **Step 1: Project Setup**
+- [ ] Initialize UV project structure
+- [ ] Create pyproject.toml with dependencies
+- [ ] Set up .python-version file
+- [ ] Create src/ directory structure
+- [ ] Run `uv sync` to install dependencies
+- **Deliverable:** Project structure in place, dependencies installed
 
-### **Phase 2: Search Engine (Week 1)**
-- [ ] Vector similarity search
-- [ ] Keyword search fallback
-- [ ] Hybrid search with ranking
-- [ ] Context snippet extraction
-- [ ] Result filtering by frontmatter
-- **Deliverable:** Search works via Python API
+### **Step 2: Utils Module (Markdown & Chunking)**
+- [ ] Implement `parse_frontmatter()` for YAML extraction
+- [ ] Implement `chunk_content()` with semantic splitting algorithm
+- [ ] Write tests for frontmatter parsing
+- [ ] Write tests for chunking (various scenarios)
+- **Deliverable:** `src/utils.py` with tested parsing/chunking functions
 
-### **Phase 3: Basic TUI (Week 2)**
-- [ ] Textual app skeleton
-- [ ] Search input component
-- [ ] Results list display
-- [ ] Basic keyboard navigation
-- [ ] Mode switching (semantic/keyword/hybrid)
-- **Deliverable:** Minimal working TUI
+### **Step 3: Indexer Module**
+- [ ] Implement `scan_markdown_files()` to recursively find .md files
+- [ ] Implement Document dataclass
+- [ ] Implement `generate_embeddings()` using sentence-transformers
+- [ ] Implement `index_documents()` with ChromaDB
+- [ ] Implement `rebuild_index()` orchestration function
+- [ ] Write tests for indexing workflow
+- **Deliverable:** `src/indexer.py` - can index markdown files into ChromaDB
 
-### **Phase 4: Enhanced TUI (Week 2)**
-- [ ] Detail view modal
-- [ ] Markdown preview with syntax highlighting
-- [ ] VS Code integration (open file)
-- [ ] Clipboard operations
-- [ ] Progress indicators
-- [ ] Help screen
-- **Deliverable:** Polished user experience
+### **Step 4: Search Module**
+- [ ] Implement SearchResult dataclass
+- [ ] Implement `semantic_search()` using ChromaDB query
+- [ ] Implement `format_results()` for CLI output
+- [ ] Write tests for search functionality
+- **Deliverable:** `src/search.py` - can search and return results
 
-### **Phase 5: Polish & Performance (Week 3)**
-- [ ] Incremental indexing
-- [ ] Caching strategy
-- [ ] Startup optimization
-- [ ] Error handling
-- [ ] Unit tests
-- [ ] Documentation
-- **Deliverable:** Production-ready tool
+### **Step 5: CLI Module**
+- [ ] Implement Click CLI group
+- [ ] Implement `index` command with progress indication
+- [ ] Implement `search` command with formatted output
+- [ ] Add --help documentation
+- [ ] Test CLI commands end-to-end
+- **Deliverable:** `src/cli.py` - working CLI interface
+
+### **Step 6: Integration & Testing**
+- [ ] End-to-end test: index sample files and search
+- [ ] Test error handling (missing directories, empty results, etc.)
+- [ ] Performance testing (ensure < 30s indexing, < 200ms search)
+- [ ] Fix any bugs found during integration
+- **Deliverable:** Fully functional MVP
+
+### **Step 7: Documentation**
+- [ ] Write README.md with installation and usage
+- [ ] Document chunking algorithm
+- [ ] Add inline code documentation
+- **Deliverable:** Complete MVP with documentation
 
 ---
 
 ## **8. Testing Strategy**
 
+**Test-Driven Development:** Write tests before implementation
+
 ```python
+# tests/test_utils.py
+def test_frontmatter_parsing_valid():
+    """Parse valid YAML frontmatter"""
+
+def test_frontmatter_parsing_missing():
+    """Handle files without frontmatter"""
+
+def test_frontmatter_parsing_malformed():
+    """Handle malformed YAML gracefully"""
+
+def test_chunk_content_small():
+    """Content smaller than max_chunk_size"""
+
+def test_chunk_content_multiple_paragraphs():
+    """Split on paragraph boundaries"""
+
+def test_chunk_content_long_sentence():
+    """Handle sentences > max_chunk_size"""
+
 # tests/test_indexer.py
-def test_frontmatter_parsing():
-    """Ensure Hugo frontmatter is correctly extracted"""
+def test_scan_markdown_files():
+    """Find all .md files recursively"""
 
-def test_content_chunking():
-    """Verify chunk sizes and overlaps"""
+def test_scan_markdown_files_empty():
+    """Handle directory with no markdown files"""
 
-def test_embedding_generation():
-    """Check embedding dimensions and consistency"""
+def test_generate_embeddings():
+    """Check embedding dimensions (384 for all-MiniLM-L6-v2)"""
+
+def test_index_documents():
+    """Store documents in ChromaDB"""
 
 # tests/test_search.py
+def test_semantic_search_basic():
+    """Basic search returns results"""
+
 def test_semantic_search_relevance():
     """Query "auth" should match "authentication" content"""
 
-def test_keyword_search():
-    """Exact phrase matching works"""
+def test_semantic_search_empty_query():
+    """Handle empty query gracefully"""
 
-def test_hybrid_search_fusion():
-    """Combined results are properly ranked"""
+def test_semantic_search_no_results():
+    """Handle no matching results"""
 
-# tests/test_tui.py (Textual has built-in testing)
-async def test_search_input():
-    """Search input captures and submits queries"""
+def test_format_results():
+    """Format results for CLI output"""
+
+# tests/test_cli.py
+def test_cli_index_command():
+    """Test index command execution"""
+
+def test_cli_search_command():
+    """Test search command execution"""
 ```
 
 **Run tests with UV:**
@@ -670,10 +575,10 @@ uv run pytest
 uv run pytest --cov=src --cov-report=html
 
 # Run specific test file
-uv run pytest tests/test_search.py -v
+uv run pytest tests/test_utils.py -v
 
-# Run tests in parallel
-uv run pytest -n auto
+# Run with verbose output
+uv run pytest -v
 ```
 
 ---
@@ -681,13 +586,12 @@ uv run pytest -n auto
 ## **9. Documentation Requirements**
 
 **README.md should include:**
-1. Quick start guide with UV commands
-2. Configuration options
-3. Keyboard shortcuts reference
+1. Project overview and features
+2. Quick start guide with UV commands
+3. CLI usage examples
 4. Troubleshooting common issues
-5. Architecture overview
-6. How to contribute
-7. UV installation instructions
+5. Architecture overview (brief)
+6. Development setup
 
 **Example README snippet:**
 ```markdown
@@ -698,54 +602,62 @@ uv run pytest -n auto
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and install
-git clone <repo-url> book-search
-cd book-search
+git clone <repo-url> dias-rag
+cd dias-rag
 uv sync
 
-# Configure
-cp config.example.yaml config.yaml
-# Edit config.yaml with your content path
+# Index your content
+uv run dias-rag index /path/to/your/content
 
-# Build index
-uv run book-index --rebuild
-
-# Launch
-uv run book-search
-```
+# Search
+uv run dias-rag search "your query"
 ```
 
-**In-app help (`Ctrl+H`):**
-- Keyboard shortcuts
-- Search tips (semantic vs keyword)
-- How to interpret scores
+## Usage
+
+```bash
+# Get help
+uv run dias-rag --help
+
+# Index markdown files
+uv run dias-rag index /path/to/content
+
+# Search with custom limit
+uv run dias-rag search "query" --limit 5
+
+# Use custom data directory
+uv run dias-rag index /path/to/content --data-dir ./my-data
+uv run dias-rag search "query" --data-dir ./my-data
+```
+```
 
 ---
 
 ## **10. Edge Cases & Error Handling**
 
 **Handle gracefully:**
-- Empty search results → Show helpful message
-- Malformed markdown → Skip file, log warning
-- Missing frontmatter → Use filename as title
-- Embedding model download → Show progress (UV handles caching)
-- Corrupted ChromaDB → Offer rebuild
-- Large files (>10KB) → Warn about chunking
-- No write permissions → Suggest alternative data dir
-- Python version mismatch → UV will warn automatically
+- **Empty search results** → Display "No results found for '{query}'"
+- **Malformed markdown** → Skip file, print warning, continue indexing
+- **Missing frontmatter** → Use empty dict, extract title from first H1 or filename
+- **Embedding model download** → First run downloads model (~90MB), show progress
+- **Invalid content directory** → Exit with clear error message
+- **No markdown files found** → Exit with helpful message
+- **No write permissions for data dir** → Exit with error suggesting different --data-dir
+- **Empty query** → Display error "Query cannot be empty"
+- **ChromaDB not initialized** → Inform user to run `index` command first
 
 ---
 
-## **11. Success Metrics**
+## **11. Success Metrics (MVP)**
 
-**The tool is successful if:**
+**The MVP is successful if:**
 1. ✅ Indexes 100 files in under 30 seconds
 2. ✅ Returns relevant results in <200ms
 3. ✅ Can find conceptually related content (not just keywords)
-4. ✅ TUI is intuitive for daily use
-5. ✅ Works offline (no external API calls)
-6. ✅ Minimal resource usage (<500MB RAM)
-7. ✅ UV setup takes < 2 minutes from clone to running
-8. ✅ Dependency resolution is fast and reliable
+4. ✅ Works offline after initial model download (no external API calls)
+5. ✅ Minimal resource usage (<500MB RAM)
+6. ✅ Setup takes < 2 minutes from clone to first search
+7. ✅ All tests pass with >80% code coverage
 
 ---
 
@@ -774,35 +686,56 @@ uv run search.py
 
 ---
 
-## **Estimated Timeline**
+## **Estimated Timeline (MVP)**
 
-- **Week 1:** Core indexing + search engine (8-10 hours)
-- **Week 2:** TUI implementation (8-10 hours)
-- **Week 3:** Polish, testing, docs (4-6 hours)
+- **Step 1-2:** Project setup + Utils (2-3 hours)
+- **Step 3:** Indexer module (3-4 hours)
+- **Step 4:** Search module (2-3 hours)
+- **Step 5:** CLI interface (2 hours)
+- **Step 6:** Integration & testing (2-3 hours)
+- **Step 7:** Documentation (1-2 hours)
 
-**Total: 2-3 weeks of part-time work**
+**Total MVP: 12-17 hours of focused work**
 
 ---
 
-## **Distribution Options**
+## **Future Enhancements (Post-MVP)**
 
-### **1. GitHub Release:**
+Ideas for future versions:
+- Incremental indexing (only update changed files)
+- Interactive TUI with Textual
+- Keyword search and hybrid search modes
+- Result filtering by frontmatter fields
+- Watch mode for auto-reindexing
+- Support for other document formats (PDF, etc.)
+- Query history and favorites
+- Export results to JSON/CSV
+
+---
+
+## **Distribution (MVP)**
+
+### **GitHub Repository:**
 ```bash
-# Users install via UV
-uv tool install git+https://github.com/yourusername/book-search
-
-# Or clone and install
-git clone <repo>
-cd book-search
+# Users clone and install
+git clone <repo-url> dias-rag
+cd dias-rag
 uv sync
+
+# Use directly
+uv run dias-rag index /path/to/content
+uv run dias-rag search "query"
 ```
 
-### **2. PyPI (Future):**
+### **Future: PyPI Distribution:**
 ```bash
 # Build and publish with UV
 uv build
 uv publish
 
-# Users install
-uv tool install book-search
+# Users install globally
+uv tool install dias-rag
+
+# Then run from anywhere
+dias-rag search "query"
 ```
